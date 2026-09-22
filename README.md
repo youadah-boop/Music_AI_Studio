@@ -97,7 +97,7 @@ MIDI players).
   export all work without a key — only the chat features need one.
 - An abcjs file for ABC music notation. 
   Download the content of  ' https://cdnjs.cloudflare.com/ajax/libs/abcjs/6.7.0/abcjs-basic-min.js ' and save it as abcjs.js. 
-  The abcjs.js file must be in the same folder with HTML file. 
+  The abcjs.js file must be in the same folder with the HTML file. 
 
 
 ## Privacy
