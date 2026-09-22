@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Music AI Studio — ABC Edition (conversation memory + MIDI export)</title>
+
+<script src="abcjs.js"></script>
+
+<script>
+  window.abcjs = window.abcjs || window.ABCJS;
+</script>
+
+<style>
+  :root{
+    --bg:#f6f5f2; --panel:#ffffff; --ink:#20232a; --muted:#6b7280;
+    --line:#e3e1db; --accent:#3a5a6b; --accent-ink:#ffffff;
+    --play:#b5714a; --ok:#2f7d4f; --err:#b64545; --highlight:#ffe8a3;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; font-size:14px;
+  }
+  .app{display:flex;height:100vh;gap:12px;padding:12px;}
+  .pane{
+    background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    display:flex; flex-direction:column; flex:1 1 0; min-width:0; overflow:hidden;
+  }
+  .pane-header{
+    padding:10px 14px; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  }
+  .pane-title{font-weight:600;font-size:13px;color:var(--ink);letter-spacing:.02em;}
+  select, input[type="password"], input[type="text"]{
+    font-family:inherit; font-size:13px; padding:5px 8px;
+    border:1px solid var(--line); border-radius:5px; background:#fff; color:var(--ink);
+  }
+  button{
+    font-family:inherit; font-size:13px; padding:6px 12px; border-radius:5px;
+    border:1px solid var(--line); background:#fff; color:var(--ink); cursor:pointer;
+  }
+  button:hover{background:#f1f0ec;}
+  button:disabled{opacity:.5;cursor:default;}
+  button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);}
+  button.primary:hover{background:#324e5d;}
+  button.play{background:var(--play);color:#fff;border-color:var(--play);}
+  button.play:hover{background:#9b5f3d;}
+  .status-line{font-size:12px;color:var(--muted);}
+  .status-ok{color:var(--ok);}
+  .status-err{color:var(--err);}
+  .status-warn{color:#9a7b1f;}
+
+  #logDiv{flex:1 1 auto;overflow-y:auto;padding:12px 14px;line-height:1.5;}
+  .msg{margin-bottom:14px;white-space:pre-wrap;word-break:break-word;}
+  .msg .who{font-weight:600;display:block;margin-bottom:2px;}
+  .msg.user .who{color:var(--accent);}
+  .msg.assistant .who{color:var(--ink);}
+  .msg.system{color:var(--muted);font-style:italic;font-size:12.5px;}
+  .msg.error{color:var(--err);}
+
+  .chat-bottom{border-top:1px solid var(--line);padding:10px 14px;display:flex;flex-direction:column;gap:8px;}
+  #promptInput{
+    width:100%; resize:vertical; min-height:64px; font-family:inherit; font-size:13px;
+    padding:8px; border:1px solid var(--line); border-radius:6px;
+  }
+  .chat-controls{
+    display:flex; align-items:center; justify-content:space-between;
+    flex-wrap:wrap; gap:8px; font-size:12.5px; color:var(--muted);
+  }
+  .chat-controls label{display:flex;align-items:center;gap:5px;cursor:pointer;}
+  .chat-controls button{padding:3px 10px;font-size:12px;}
+  .memory-info{font-size:12px;color:var(--muted);}
+
+  .canvas-toolbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+  #fileLabel{font-weight:600;font-size:13px;}
+  #abcCanvas{
+    flex:1 1 auto; width:100%; border:none; outline:none; resize:none; padding:14px;
+    font-family:Consolas,"SF Mono",Menlo,monospace; font-size:14px; line-height:1.6; color:var(--ink);
+  }
+  .canvas-status{
+    border-top:1px solid var(--line); padding:6px 14px; font-size:12px; color:var(--muted);
+    display:flex; justify-content:space-between;
+  }
+
+  .hint{
+    padding:6px 14px; font-size:11.5px; color:var(--muted);
+    background:#fbfaf7; border-top:1px solid var(--line);
+  }
+  .hint code{background:#f1f0ec;padding:1px 4px;border-radius:3px;font-size:11px;}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ============================ CHAT PANE ============================ -->
+  <section class="pane" style="max-width:38%;">
+    <div class="pane-header">
+      <span class="pane-title">Conversation</span>
+      <select id="modelSelect"></select>
+      <button id="connectBtn" class="primary">Connect</button>
+    </div>
+    <div class="pane-header" style="padding-top:0;border-bottom:none;">
+      <span id="statusLabel" class="status-line status-err">Not connected</span>
+    </div>
+    <div id="logDiv"></div>
+    <div class="chat-bottom">
+      <textarea id="promptInput" placeholder="Type your request (Ctrl+Enter to send)..."></textarea>
+      <div class="chat-controls">
+        <label><input type="checkbox" id="writeToCanvasCheck"> Write the reply into the canvas</label>
+        <span>
+          <label><input type="radio" name="insertMode" value="replace" checked> Replace all</label>
+          <label><input type="radio" name="insertMode" value="cursor"> Insert at cursor</label>
+        </span>
+      </div>
+      <div class="chat-controls">
+        <label title="When checked, previous exchanges are sent back to the model with every message.">
+          <input type="checkbox" id="memoryCheck" checked> Memory (send conversation history)
+        </label>
+        <span>
+          <span id="memoryInfo" class="memory-info">0 messages in memory</span>
+          <button id="clearMemoryBtn" title="Forget previous exchanges (the log stays on screen)">Forget</button>
+        </span>
+      </div>
+      <button id="sendBtn" class="primary" style="width:100%;">Send&nbsp;&nbsp;(Ctrl+Enter)</button>
+    </div>
+  </section>
+
+  <!-- ============================ WORK PANE (ABC CANVAS) ============================ -->
+  <section class="pane">
+    <div class="pane-header">
+      <span id="fileLabel">Untitled (not saved)</span>
+      <div class="canvas-toolbar" style="margin-left:auto;">
+        <button id="playBtn" class="play">&#9654; Play</button>
+        <button id="stopBtn">&#9632; Stop</button>
+        <span style="width:1px;height:20px;background:var(--line);display:inline-block;"></span>
+        <button id="newBtn">New</button>
+        <button id="openBtn">Open</button>
+        <button id="saveBtn">Save ABC</button>
+        <button id="midiBtn" title="Export the score as a .mid file (%%MIDI program instruments are preserved)">Save MIDI</button>
+        <input type="file" id="fileInput" accept=".abc,.txt" style="display:none;">
+      </div>
+    </div>
+
+    <textarea id="abcCanvas" spellcheck="false"></textarea>
+
+    <div class="hint">
+      To choose an instrument for each voice, add <code>%%MIDI program N</code> right after the <code>V:x</code> line.
+      Examples: <code>0</code>=Piano, <code>24</code>=Guitar, <code>40</code>=Violin, <code>42</code>=Cello,
+      <code>56</code>=Trumpet, <code>71</code>=Clarinet, <code>73</code>=Flute.
+    </div>
+
+    <div class="canvas-status">
+      <span id="canvasStatus">0 lines, 0 characters</span>
+      <span style="color:var(--muted);">Audio playback: abcjs (Web Audio, sampled sounds)</span>
+    </div>
+  </section>
+
+</div>
+
+<div id="abc-render-target" style="display:none"></div>
+
+<script>
+"use strict";
+
+/* --------------------------------------------------------------------
+   Music AI Studio - ABC Edition
+   ----------------------------------------------------------------------
+   Instruments are selected ONLY through ABC notation, using
+   %%MIDI program N directives placed after each V:x voice declaration.
+
+   Example:
+       X:1
+       T:Duet
+       M:4/4
+       L:1/8
+       K:C
+       V:1 name="Flute"
+       %%MIDI program 73
+       CDEF GABc |
+       V:2 name="Cello"
+       %%MIDI program 42
+       C,,2 G,,2 C,,2 G,,2 |
+
+   There is no instrument selector in the interface. The code simply
+   renders the ABC text and plays it with abcjs, which natively assigns
+   the right instrument to each voice.
+
+   Features:
+   - Chat with a Gemini model, with conversation MEMORY: the history
+     (your requests and the model's replies) is sent with every message.
+     The canvas content is attached only to the current message (the
+     current state of the score), not to past messages, to limit token
+     usage. A checkbox turns memory off, the "Forget" button starts
+     over, and MAX_HISTORY_MESSAGES caps the history size.
+   - Open / save ABC files, play from the beginning with the current
+     note highlighted in the editor.
+   - MIDI EXPORT: the "Save MIDI" button writes a .mid file to disk
+     (abcjs.synth.getMidiFile), with a fix for program-change channels
+     (see fixMidiProgramChannels).
+-------------------------------------------------------------------- */
+
+const GEMINI_MODELS = [
+  "gemini-3.5-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.1-pro",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
+];
+
+const SYSTEM_PROMPT_CHAT =
+  "You are a music composition assistant and an expert in ABC notation. " +
+  "The user is working on a score in a notepad-style editor; the current " +
+  "content of that page (in ABC notation, possibly empty) is provided with " +
+  "every message. Answer freely and helpfully: explanations, suggestions, " +
+  "harmonic analysis, melody ideas, and so on. The conversation history is " +
+  "also provided: rely on it to keep continuity. Reply in the language the " +
+  "user writes in. You may include ABC code in your reply (for example in " +
+  "a code block) as an illustration, but nothing you write here is " +
+  "automatically inserted into the score. For multi-voice scores, specify " +
+  "the instrument of each voice with a %%MIDI program N directive placed " +
+  "right after the V:x line (0=Piano, 24=Guitar, 40=Violin, 42=Cello, " +
+  "56=Trumpet, 71=Clarinet, 73=Flute, etc.).";
+
+const SYSTEM_PROMPT_CANVAS =
+  "You are a music composition assistant and an expert in ABC notation. " +
+  "The user will INSERT YOUR REPLY AS-IS into their score editor. The " +
+  "current content of the page (ABC notation, possibly empty) is provided " +
+  "below, followed by the user's request; the conversation history is also " +
+  "provided. Reply ONLY with valid ABC notation code (no explanation, no " +
+  "introductory sentence, no markdown code fences, no comments outside " +
+  "ABC notation) corresponding to the requested or modified score. " +
+  "For multi-voice scores, use V: declarations in the header followed by " +
+  "the measures of each voice. For each voice, add a %%MIDI program N " +
+  "directive right after its V:x line to choose its instrument " +
+  "(0=Piano, 24=Guitar, 40=Violin, 42=Cello, 56=Trumpet, " +
+  "71=Clarinet, 73=Flute, etc.).";
+
+// ---- Application state --------------------------------------------------
+let apiKey = "";
+let currentModel = GEMINI_MODELS[0];
+let connected = false;
+let dirty = false;
+let currentFileName = null;
+let currentSynth = null;
+let currentTimingCallbacks = null;
+
+// History sent to Gemini: [{ role: "user" | "model", text }, ...]
+// Holds only requests and replies (no canvas snapshots).
+let chatHistory = [];
+const MAX_HISTORY_MESSAGES = 40;   // EVEN number (20 exchanges); the oldest are dropped first
+
+// ---- DOM elements -------------------------------------------------------
+const modelSelect = document.getElementById("modelSelect");
+const connectBtn = document.getElementById("connectBtn");
+const statusLabel = document.getElementById("statusLabel");
+const logDiv = document.getElementById("logDiv");
+const promptInput = document.getElementById("promptInput");
+const sendBtn = document.getElementById("sendBtn");
+const writeToCanvasCheck = document.getElementById("writeToCanvasCheck");
+const memoryCheck = document.getElementById("memoryCheck");
+const memoryInfo = document.getElementById("memoryInfo");
+const clearMemoryBtn = document.getElementById("clearMemoryBtn");
+
+const fileLabel = document.getElementById("fileLabel");
+const playBtn = document.getElementById("playBtn");
+const stopBtn = document.getElementById("stopBtn");
+const newBtn = document.getElementById("newBtn");
+const openBtn = document.getElementById("openBtn");
+const saveBtn = document.getElementById("saveBtn");
+const midiBtn = document.getElementById("midiBtn");
+const fileInput = document.getElementById("fileInput");
+const abcCanvas = document.getElementById("abcCanvas");
+const canvasStatus = document.getElementById("canvasStatus");
+
+// ---- Initialization ------------------------------------------------------
+GEMINI_MODELS.forEach((m) => {
+  const opt = document.createElement("option");
+  opt.value = m;
+  opt.textContent = m;
+  modelSelect.appendChild(opt);
+});
+modelSelect.value = currentModel;
+
+abcCanvas.value =
+  "X:1\n" +
+  "T:Demo duet\n" +
+  "M:4/4\n" +
+  "L:1/8\n" +
+  "K:C\n" +
+  "V:1 name=\"Flute\"\n" +
+  "%%MIDI program 73\n" +
+  "CDEF GABc | c2 B2 A2 G2 | F2 E2 D2 C2 | C8 |\n" +
+  "V:2 name=\"Cello\"\n" +
+  "%%MIDI program 42\n" +
+  "C,2 G,2 C,2 G,2 | C,2 G,2 C,2 G,2 | F,2 C,2 G,2 C,2 | C,8 |\n";
+
+updateCanvasStatus();
+updateMemoryInfo();
+log("Welcome to Music AI Studio. Select and connect a Gemini model to get started.", "system");
+log("Conversation memory is on: the model remembers previous exchanges (use the \"Forget\" button to start from scratch).", "system");
+log("To play several instruments at once, add a \"%%MIDI program N\" line right after each \"V:x\" (0=Piano, 40=Violin, 42=Cello, 73=Flute, etc.).", "system");
+
+// ---- Conversation log ---------------------------------------------------
+function log(text, kind, prefix) {
+  const div = document.createElement("div");
+  div.className = "msg " + kind;
+  if (prefix) {
+    const who = document.createElement("span");
+    who.className = "who";
+    who.textContent = prefix;
+    div.appendChild(who);
+  }
+  div.appendChild(document.createTextNode(text));
+  logDiv.appendChild(div);
+  logDiv.scrollTop = logDiv.scrollHeight;
+  return div;
+}
+
+// ---- Connection / Gemini calls ------------------------------------------
+modelSelect.addEventListener("change", () => {
+  currentModel = modelSelect.value;
+  connected = false;
+  setStatus("Not connected (model changed)", "err");
+});
+
+function setStatus(text, kind) {
+  statusLabel.textContent = text;
+  statusLabel.className = "status-line status-" + kind;
+}
+
+async function testConnection(key, model) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: "ping" }] }],
+      generationConfig: { maxOutputTokens: 5 },
+    }),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`API error (${res.status}): ${errText}`);
+  }
+}
+
+async function generate(systemText, pageContent, userPrompt, past) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(currentModel)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const userText =
+    `CURRENT content of the page (ABC notation; it may have changed since the previous messages):\n` +
+    `-----BEGIN PAGE-----\n${pageContent}\n-----END PAGE-----\n\n` +
+    `User request:\n${userPrompt}`;
+  // History (past requests/replies) + current message (with the current canvas)
+  const contents = (past || []).map((h) => ({ role: h.role, parts: [{ text: h.text }] }));
+  contents.push({ role: "user", parts: [{ text: userText }] });
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemText }] },
+      contents: contents,
+    }),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`API error (${res.status}): ${errText}`);
+  }
+  const data = await res.json();
+  const cand = data.candidates && data.candidates[0];
+  if (!cand) throw new Error("Unexpected response from the model.");
+  const parts = (cand.content && cand.content.parts) || [];
+  const text = parts.filter((p) => !p.thought).map((p) => p.text || "").join("");
+  if (!text) throw new Error(`Empty response (finishReason: ${cand.finishReason || "unknown"}).`);
+  return text;
+}
+
+connectBtn.addEventListener("click", async () => {
+  const key = prompt(
+    "Gemini API key:\n(it is only sent to the Gemini API and never stored anywhere else)",
+    apiKey
+  );
+  if (key === null) return;
+  const trimmed = key.trim();
+  if (!trimmed) { alert("No API key provided."); return; }
+  connectBtn.disabled = true;
+  setStatus(`Connecting to ${currentModel}...`, "warn");
+  try {
+    await testConnection(trimmed, currentModel);
+    apiKey = trimmed;
+    connected = true;
+    setStatus(`Connected - ${currentModel}`, "ok");
+    log(`Connected to model ${currentModel}.`, "system");
+  } catch (e) {
+    connected = false;
+    setStatus("Connection failed", "err");
+    log(`Connection failed: ${e.message}`, "error");
+  } finally {
+    connectBtn.disabled = false;
+  }
+});
+
+async function sendPrompt() {
+  const promptText = promptInput.value.trim();
+  if (!promptText) return;
+  if (!connected) { alert("Please connect to a Gemini model first."); return; }
+  const pageContent = abcCanvas.value;
+  const writeToCanvas = writeToCanvasCheck.checked;
+  const insertMode = document.querySelector('input[name="insertMode"]:checked').value;
+  const systemText = writeToCanvas ? SYSTEM_PROMPT_CANVAS : SYSTEM_PROMPT_CHAT;
+  const useMemory = memoryCheck.checked;
+  const past = useMemory ? chatHistory.slice() : [];
+
+  log(promptText, "user", "You: ");
+  promptInput.value = "";
+  sendBtn.disabled = true;
+  const waitingDiv = log("(the model is replying...)", "system");
+
+  try {
+    const reply = await generate(systemText, pageContent, promptText, past);
+    waitingDiv.remove();
+    if (useMemory) {
+      // The exchange is stored only once the reply has arrived (no orphan message if the call fails).
+      chatHistory.push({ role: "user", text: promptText }, { role: "model", text: reply });
+      trimHistory();
+      updateMemoryInfo();
+    }
+    if (writeToCanvas) {
+      applyToCanvas(reply, insertMode);
+      log("Reply inserted into the canvas.", "system");
+    } else {
+      log(reply, "assistant", "Assistant: ");
+    }
+  } catch (e) {
+    waitingDiv.remove();
+    log(`Error: ${e.message}`, "error");
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+sendBtn.addEventListener("click", sendPrompt);
+promptInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendPrompt(); }
+});
+
+// ---- Conversation memory ------------------------------------------------
+function trimHistory() {
+  // Messages come in pairs (user + model): the oldest are removed two at a time,
+  // which guarantees the history always starts with a "user" message.
+  while (chatHistory.length > MAX_HISTORY_MESSAGES) chatHistory.splice(0, 2);
+}
+
+function updateMemoryInfo() {
+  const n = chatHistory.length;
+  memoryInfo.textContent = `${n} message${n === 1 ? "" : "s"} in memory (max ${MAX_HISTORY_MESSAGES})`;
+}
+
+clearMemoryBtn.addEventListener("click", () => {
+  if (!chatHistory.length) { log("Memory is already empty.", "system"); return; }
+  chatHistory = [];
+  updateMemoryInfo();
+  log("Memory cleared: the model starts from scratch (the log above stays on screen).", "system");
+});
+
+function applyToCanvas(text, mode) {
+  text = text.replace(/^\n+|\n+$/g, "");
+  if (mode === "replace") {
+    abcCanvas.value = text + "\n";
+  } else {
+    const pos = abcCanvas.selectionStart;
+    const before = abcCanvas.value.slice(0, pos);
+    const after = abcCanvas.value.slice(pos);
+    abcCanvas.value = before + text + after;
+  }
+  dirty = true;
+  updateCanvasStatus();
+}
+
+// ---- Canvas: state and files --------------------------------------------
+function updateCanvasStatus() {
+  const val = abcCanvas.value;
+  const lines = val.length ? val.split("\n").length : 0;
+  canvasStatus.textContent = `${lines} line${lines === 1 ? "" : "s"}, ${val.length} character${val.length === 1 ? "" : "s"}${dirty ? " *" : ""}`;
+}
+
+abcCanvas.addEventListener("input", () => {
+  dirty = true;
+  updateCanvasStatus();
+});
+
+window.addEventListener("beforeunload", (e) => {
+  if (dirty) { e.preventDefault(); e.returnValue = ""; }
+});
+
+newBtn.addEventListener("click", () => {
+  if (dirty && !confirm("The canvas has unsaved changes. Continue and lose them?")) return;
+  abcCanvas.value = "";
+  currentFileName = null;
+  fileLabel.textContent = "Untitled (not saved)";
+  dirty = false;
+  updateCanvasStatus();
+});
+
+openBtn.addEventListener("click", () => {
+  if (dirty && !confirm("The canvas has unsaved changes. Continue and lose them?")) return;
+  fileInput.click();
+});
+
+fileInput.addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    abcCanvas.value = reader.result;
+    currentFileName = file.name;
+    fileLabel.textContent = file.name;
+    dirty = false;
+    updateCanvasStatus();
+  };
+  reader.onerror = () => alert("Unable to read the file.");
+  reader.readAsText(file, "utf-8");
+  fileInput.value = "";
+});
+
+saveBtn.addEventListener("click", async () => {
+  const blob = new Blob([abcCanvas.value], { type: "text/plain" });
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: currentFileName || "score.abc",
+        types: [{ description: "ABC notation", accept: { "text/plain": [".abc"] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      currentFileName = handle.name;
+      fileLabel.textContent = handle.name;
+      dirty = false;
+      updateCanvasStatus();
+      return;
+    } catch (err) {
+      if (err && err.name === "AbortError") return;
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = currentFileName || "score.abc";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  dirty = false;
+  updateCanvasStatus();
+});
+
+// ---- Score utilities ----------------------------------------------------
+function tuneHasNote(tune) {
+  return (tune.lines || []).some(
+    (line) => line.staff && line.staff.some(
+      (s) => s.voices && s.voices.some((v) => v.some((el) => el.el_type === "note"))
+    )
+  );
+}
+
+// ---- MIDI export ----------------------------------------------------------
+// In "encoded" mode, abcjs.synth.getMidiFile returns a data:audio/midi, URI
+// whose bytes are written as %XX (except the literal MThd / MTrk markers).
+function decodeMidiDataUri(uri) {
+  const decoded = uri
+    .replace("data:audio/midi,", "")
+    .replace(/MThd/g, "%4d%54%68%64")
+    .replace(/MTrk/g, "%4d%54%72%6b");
+  const out = new Uint8Array(Math.floor(decoded.length / 3));
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(decoded.substr(i * 3 + 1, 2), 16);
+  }
+  return out;
+}
+
+// Fix: the abcjs MIDI generator ALWAYS writes program changes (instruments)
+// on channel 0, while each voice plays its notes on its own channel
+// (voice 1 -> channel 0, voice 2 -> channel 1, ...). In an external MIDI
+// player, every voice would therefore end up with the same instrument.
+// Here we rewrite the status byte of each program change so that it targets
+// the channel of its track's notes (same file length, nothing else changes).
+function fixMidiProgramChannels(b) {
+  if (b.length < 14 || b[0] !== 0x4d || b[1] !== 0x54 || b[2] !== 0x68 || b[3] !== 0x64) return b;
+  let p = 14;
+  while (p + 8 <= b.length) {
+    if (b[p] !== 0x4d || b[p + 1] !== 0x54 || b[p + 2] !== 0x72 || b[p + 3] !== 0x6b) break;
+    const len = ((b[p + 4] << 24) | (b[p + 5] << 16) | (b[p + 6] << 8) | b[p + 7]) >>> 0;
+    const start = p + 8;
+    const end = Math.min(start + len, b.length);
+    const progPositions = [];
+    let noteChannel = -1;
+    let q = start;
+    let running = 0;
+    const readVlq = () => {
+      let v = 0, c;
+      do { c = b[q++]; v = v * 128 + (c & 0x7f); } while ((c & 0x80) && q < end);
+      return v;
+    };
+    while (q < end) {
+      readVlq();                       // delta-time
+      if (q >= end) break;
+      let s = b[q];
+      let statusPos = -1;
+      if (s < 0x80) { s = running; }   // running status
+      else { statusPos = q; q++; if (s < 0xf0) running = s; }
+      if (s === 0xff) { q++; const l = readVlq(); q += l; }                 // meta event
+      else if (s === 0xf0 || s === 0xf7) { const l = readVlq(); q += l; }  // sysex
+      else {
+        const hi = s & 0xf0;
+        if (hi === 0xc0) { if (statusPos >= 0) progPositions.push(statusPos); q += 1; }
+        else if (hi === 0xd0) { q += 1; }
+        else {
+          if (hi === 0x90 && noteChannel < 0 && b[q + 1] > 0) noteChannel = s & 0x0f;
+          q += 2;
+        }
+      }
+    }
+    if (noteChannel >= 0) progPositions.forEach((pos) => { b[pos] = 0xc0 | noteChannel; });
+    p = start + len;
+  }
+  return b;
+}
+
+function buildMidiBytes(tune) {
+  let res = abcjs.synth.getMidiFile(tune, { midiOutputType: "encoded" });
+  if (Array.isArray(res)) res = res[0];
+  if (typeof res !== "string" || res.indexOf("MThd") < 0) {
+    throw new Error("abcjs did not produce a MIDI file.");
+  }
+  return fixMidiProgramChannels(decodeMidiDataUri(res));
+}
+
+function safeFileBase(name) {
+  return (name || "").replace(/\.(abc|txt|mid|midi)$/i, "").replace(/[\\/:*?"<>|]+/g, "_").trim();
+}
+
+async function saveBlobToDisk(blob, suggestedName, description, mime, extensions) {
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: suggestedName,
+        types: [{ description: description, accept: { [mime]: extensions } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return handle.name;
+    } catch (err) {
+      if (err && err.name === "AbortError") return null;   // cancelled by the user
+      // any other error: fall back to a regular download
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = suggestedName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return suggestedName;
+}
+
+midiBtn.addEventListener("click", async () => {
+  const text = abcCanvas.value;
+  if (!text.trim()) { log("The canvas is empty: nothing to export.", "system"); return; }
+  if (!(window.abcjs && abcjs.synth && typeof abcjs.synth.getMidiFile === "function")) {
+    alert("This version of abcjs does not provide MIDI export (abcjs.synth.getMidiFile).");
+    return;
+  }
+
+  let tune;
+  try {
+    const tunes = abcjs.renderAbc("abc-render-target", text, {});
+    tune = tunes && tunes[0];
+  } catch (e) {
+    log(`ABC parsing error: ${e.message || e}`, "error");
+    return;
+  }
+  if (!tune) { log("Unable to parse the score.", "error"); return; }
+  if (!tuneHasNote(tune)) { log("No notes found in the canvas.", "system"); return; }
+
+  let bytes;
+  try {
+    bytes = buildMidiBytes(tune);
+  } catch (e) {
+    log(`Error while creating the MIDI file: ${e.message || e}`, "error");
+    return;
+  }
+
+  const title = tune.metaText && tune.metaText.title ? tune.metaText.title : "";
+  const base = safeFileBase(currentFileName) || safeFileBase(title) || "score";
+  const blob = new Blob([bytes], { type: "audio/midi" });
+  try {
+    const saved = await saveBlobToDisk(blob, base + ".mid", "MIDI file", "audio/midi", [".mid", ".midi"]);
+    if (saved) log(`MIDI file saved: ${saved}`, "system");
+  } catch (e) {
+    log(`Failed to save the MIDI file: ${e.message || e}`, "error");
+  }
+});
+
+// ---- Audio playback (abcjs) ---------------------------------------------
+function stopPlayback() {
+  if (currentSynth) {
+    try { currentSynth.stop(); } catch (e) { /* already stopped */ }
+    currentSynth = null;
+  }
+  if (currentTimingCallbacks) {
+    try { currentTimingCallbacks.stop(); } catch (e) { /* already stopped */ }
+    currentTimingCallbacks = null;
+  }
+  const pos = abcCanvas.selectionStart;
+  abcCanvas.setSelectionRange(pos, pos);
+  playBtn.disabled = false;
+}
+stopBtn.addEventListener("click", stopPlayback);
+
+async function playFromCursor() {
+  stopPlayback();
+
+  if (!(window.abcjs && abcjs.synth && abcjs.synth.supportsAudio && abcjs.synth.supportsAudio())) {
+    alert("This browser does not support Web Audio playback (abcjs engine).");
+    return;
+  }
+
+  const fullText = abcCanvas.value;
+  if (!fullText.trim()) {
+    log("The canvas is empty.", "system");
+    return;
+  }
+
+  // ALWAYS play from the start of the tune, so that the voice declarations
+  // (V:x) and the %%MIDI program directives are in place and each voice
+  // gets its instrument.
+  //
+  // (Highlighting of the current note during playback still works
+  //  through TimingCallbacks.)
+
+  let tune;
+  try {
+    const tunes = abcjs.renderAbc("abc-render-target", fullText, {});
+    tune = tunes && tunes[0];
+  } catch (e) {
+    log(`ABC parsing error: ${e.message || e}`, "error");
+    return;
+  }
+  if (!tune) {
+    log("Unable to parse the score.", "error");
+    return;
+  }
+
+  // Sanity check: is there at least one note?
+  if (!tuneHasNote(tune)) {
+    log("No notes found in the canvas.", "system");
+    return;
+  }
+
+  playBtn.disabled = true;
+  const synth = new abcjs.synth.CreateSynth();
+  try {
+    await synth.init({ visualObj: tune });
+    await synth.prime();
+    currentSynth = synth;
+
+    currentTimingCallbacks = new abcjs.TimingCallbacks(tune, {
+      eventCallback: (ev) => {
+        if (!ev) { stopPlayback(); return; }
+        if (typeof ev.startChar === "number" && typeof ev.endChar === "number") {
+          abcCanvas.setSelectionRange(ev.startChar, ev.endChar);
+        }
+      },
+    });
+    synth.start();
+    currentTimingCallbacks.start();
+  } catch (err) {
+    log(`Playback error: ${(err && err.message) || err}`, "error");
+    playBtn.disabled = false;
+    currentSynth = null;
+    currentTimingCallbacks = null;
+  }
+}
+playBtn.addEventListener("click", playFromCursor);
+</script>
+</body>
+</html>
