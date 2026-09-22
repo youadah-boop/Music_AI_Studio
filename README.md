@@ -28,8 +28,8 @@ just open `music_ai_studio_abc.html` in a modern browser
   - *Write to canvas*: the model's reply is inserted as-is into the
     editor (replacing everything, or at the cursor) — useful for
     "compose me a 8-bar melody in D minor" style requests.
-- **Playback in the browser** via [abcjs](https://abcjs.net/), with the
-  currently-playing note highlighted in the editor.
+- **Playback in the browser** with the
+  currently-playing note in the editor.
 - **MIDI export** — the "Save MIDI" button writes a standard `.mid` file
   to disk, one instrument per voice.
 - **Multi-instrument, multi-voice scores** — instruments are chosen
