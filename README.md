@@ -7,7 +7,7 @@ into the score; play the result in the browser; and export it as a
 standard MIDI file.
 
 No build step, no server, no account beyond your own Gemini API key —
-just open `music_ai_studio_abc_en.html` in a modern browser
+just open `music_ai_studio_abc.html` in a modern browser
 (Chrome or Edge recommended for full file-saving support).
 
 ## Features
