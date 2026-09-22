@@ -1,6 +1,6 @@
 # Music AI Studio — ABC Edition
 
-A single self-contained HTML page that pairs a Gemini chat assistant with an
+An HTML page that pairs a Gemini chat assistant with an
 [ABC notation](https://abcnotation.com/) score editor. Ask the assistant for
 melodies, harmonic analysis, or arrangement ideas; have it write directly
 into the score; play the result in the browser; and export it as a
